@@ -42,3 +42,8 @@ Built with Python and a `tkinter`-based graphical user interface.
 1. Make sure you have Python 3 installed:
 ```bash
 python --version
+
+git clone https://github.com/михал3в/ip-calculator.git
+cd ip-calculator
+python ip_calculator.py
+
