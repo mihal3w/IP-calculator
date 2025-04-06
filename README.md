@@ -39,5 +39,5 @@
 1. Клонирай проекта:
 
 ```bash
-git clone https://github.com/ТВОЯТ_ПОТРЕБИТЕЛ/ip-calculator.git
-cd ip-calculator
+git clone https://github.com/mihal3w/IP-calculator.git
+cd IP-calculator
