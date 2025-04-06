@@ -1,43 +1,44 @@
-# 🧠 IP Калкулатор с разпределение по места
+# 🧠 IP Calculator & Network Planning Tool
 
-Приложение с графичен интерфейс, което позволява изчисления върху IP адреси, подмрежи, хостове, broadcast адреси, и автоматично разпределение на IP мрежа между различни места/офиси.
+An intuitive desktop application that combines **IP network parameter calculations** with **automated subnet allocation** for different physical or logical locations (e.g., departments, offices, floors).
 
-Проектът е разработен с Python и използва вградените библиотеки `tkinter` и `ipaddress`.
-
----
-
-## 🚀 Функционалности
-
-- Преобразуване на IP адреси в двоична форма
-- Изчисляване на:
-  - Мрежова маска
-  - Wildcard маска
-  - Мрежов адрес и broadcast
-  - Първи и последен хост
-  - Общ брой хостове
-- Автоматично разпределение на подмрежи за различни места според нуждите им от хостове
-- Графичен интерфейс с два таба:
-  - IP Калкулатор
-  - Разпределение на мрежа по места
-- Подробни резултати във визуална таблица и при двоен клик – детайли за всяка подмрежа
+Built with Python and a `tkinter`-based graphical user interface.
 
 ---
 
-## 🛠️ Технологии
+## 🚀 Key Features
+
+### ✅ IP Calculator
+- Calculates:
+  - Subnet mask
+  - Wildcard mask
+  - Network and broadcast addresses
+  - First and last usable host
+  - Total number of hosts
+- Converts IP address and subnet mask to binary format
+- Clean and interactive GUI for easy input and result display
+
+### 🗂️ Subnet Distribution
+- Automatically splits a given network (e.g., `192.168.0.0/24`) according to the needs of different locations
+- Allows entry of a list of locations and required number of hosts for each
+- Generates subnets with:
+  - Optimal address space utilization
+  - Details such as network address, broadcast, first/last host, subnet mask, etc.
+- Option to expand each result for more detailed view
+
+---
+
+## 🛠️ Built With
 
 - **Python 3**
-- **Tkinter** – графичен потребителски интерфейс
-- **ipaddress** – работа с IP адреси
-- **ttk** – стилизиран GUI компоненти
+- **Tkinter** – graphical user interface
+- **ipaddress** – IP and network calculations
+- **ttk** – styled GUI components
 
 ---
 
-## ▶️ Стартиране
+## 📥 Getting Started
 
-Увери се, че имаш Python 3 инсталиран.
-
-1. Клонирай проекта:
-
+1. Make sure you have Python 3 installed:
 ```bash
-git clone https://github.com/mihal3w/IP-calculator.git
-cd IP-calculator
+python --version
