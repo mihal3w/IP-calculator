@@ -1,0 +1,467 @@
+import ipaddress
+import tkinter as tk
+from tkinter import ttk, messagebox
+from collections import OrderedDict
+
+
+def ip_to_binary(ip):
+    return '.'.join(format(int(octet), '08b') for octet in ip.split('.'))
+
+
+def get_ip_class(ip):
+    first_octet = int(ip.split('.')[0])
+    if 1 <= first_octet <= 126:
+        return "A"
+    elif 128 <= first_octet <= 191:
+        return "B"
+    elif 192 <= first_octet <= 223:
+        return "C"
+    elif 224 <= first_octet <= 239:
+        return "D (Multicast)"
+    else:
+        return "E (Experimental)"
+
+
+def calculate_wildcard(mask):
+    return '.'.join(str(255 - int(octet)) for octet in mask.split('.'))
+
+
+def calculate_network_info(ip, prefix):
+    network = ipaddress.IPv4Network(f"{ip}/{prefix}", strict=False)
+    subnet_mask = str(network.netmask)
+    wildcard_mask = calculate_wildcard(subnet_mask)
+    network_address = str(network.network_address)
+    network_address_binary = ip_to_binary(network_address)
+    broadcast_address = str(network.broadcast_address)
+
+    if prefix < 31:
+        first_host = str(network.network_address + 1)
+        last_host = str(network.broadcast_address - 1)
+        total_hosts = (2 ** (32 - prefix)) - 2
+    else:
+        first_host, last_host, total_hosts = "Няма", "Няма", 0
+
+    has_solution = "Има валидно разпределение" if total_hosts > 0 else "Няма достатъчно адреси!"
+
+    return subnet_mask, wildcard_mask, network_address, network_address_binary, first_host, last_host, broadcast_address, total_hosts, has_solution
+
+
+def get_prefix_distribution(prefix):
+    octets = [0, 0, 0, 0]
+    for i in range(4):
+        if prefix >= 8:
+            octets[i] = 8
+            prefix -= 8
+        else:
+            octets[i] = prefix
+            break
+    return octets
+
+
+class PlaceAllocator:
+    def __init__(self, ip, prefix):
+        self.main_network = ipaddress.IPv4Network(f"{ip}/{prefix}", strict=False)
+        self.allocated_subnets = []
+        self.place_requirements = OrderedDict()
+
+    def add_place(self, name, hosts):
+        self.place_requirements[name] = hosts
+
+    def calculate_subnets(self):
+        sorted_places = sorted(self.place_requirements.items(), key=lambda x: x[1], reverse=True)
+        available_networks = [self.main_network]
+        results = []
+
+        for place, hosts in sorted_places:
+            required_hosts = hosts + 2  # Network and broadcast addresses
+            required_prefix = 32 - (required_hosts - 1).bit_length()
+
+            # Find best fit (smallest available network that can accommodate)
+            best_fit = None
+            best_fit_index = -1
+
+            for i, net in enumerate(available_networks):
+                if net.prefixlen <= required_prefix:
+                    if best_fit is None or net.prefixlen > best_fit.prefixlen:
+                        best_fit = net
+                        best_fit_index = i
+
+            if best_fit is None:
+                results.append({'place': place, 'error': f"Няма достатъчно адреси за {hosts} хоста"})
+                continue
+
+            # Remove the selected network from available
+            del available_networks[best_fit_index]
+
+            # Calculate exact prefix needed
+            exact_prefix = 32 - (required_hosts - 1).bit_length()
+
+            try:
+                # Split the network
+                subnets = list(best_fit.subnets(new_prefix=exact_prefix))
+                allocated_subnet = subnets[0]
+
+                # Add remaining subnets back to available
+                available_networks.extend(subnets[1:])
+                # Sort available networks by prefix length (descending) for best-fit
+                available_networks.sort(key=lambda x: x.prefixlen, reverse=True)
+
+                results.append({
+                    'place': place,
+                    'required_hosts': hosts,
+                    'required_power': (hosts + 2).bit_length(),
+                    'required_calculated': 2 ** ((hosts + 2).bit_length()),
+                    'subnet': str(allocated_subnet),
+                    'prefix': allocated_subnet.prefixlen,
+                    'first_host': str(allocated_subnet.network_address + 1),
+                    'last_host': str(allocated_subnet.broadcast_address - 1),
+                    'broadcast': str(allocated_subnet.broadcast_address),
+                    'total_hosts': allocated_subnet.num_addresses - 2,
+                    'network_object': allocated_subnet
+                })
+
+                self.allocated_subnets.append(allocated_subnet)
+
+            except ValueError as e:
+                results.append({'place': place, 'error': f"Грешка при разпределение: {str(e)}"})
+
+        return results
+
+
+class IPCalculatorApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("IP Калкулатор с разпределение за места")
+        self.root.geometry("1150x850")
+        self.place_counter = 1
+        self.create_widgets()
+        self.style = ttk.Style()
+        self.style.configure('Treeview', font=('Arial', 10), rowheight=25)
+        self.style.configure('Treeview.Heading', font=('Arial', 10, 'bold'))
+
+    def create_widgets(self):
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        self.create_calculator_tab()
+        self.create_place_allocation_tab()
+
+        # Footer
+        footer_frame = tk.Frame(self.root)
+        footer_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Label(footer_frame, text="Направено от: Димитър Михалев (mihal3w)",
+                 font=('Arial', 12, 'bold')).pack(side=tk.RIGHT, padx=15, pady=10)
+
+    def create_calculator_tab(self):
+        self.calc_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.calc_tab, text="IP Калкулатор")
+
+        # Main frame
+        main_frame = ttk.Frame(self.calc_tab)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Input frame
+        input_frame = ttk.LabelFrame(main_frame, text="Входни данни", padding=10)
+        input_frame.pack(fill=tk.X, pady=5)
+
+        # Prefix distribution
+        self.prefix_dist_text = tk.StringVar()
+        prefix_dist_frame = ttk.Frame(input_frame)
+        prefix_dist_frame.grid(row=0, column=0, columnspan=4, pady=5)
+        tk.Label(prefix_dist_frame, text="Битове за мрежа:", font=('Arial', 10)).pack(side=tk.LEFT)
+        tk.Label(prefix_dist_frame, textvariable=self.prefix_dist_text,
+                 font=('Arial', 12, 'bold')).pack(side=tk.LEFT, padx=10)
+
+        # IP and prefix inputs
+        ttk.Label(input_frame, text="IP адрес:", font=('Arial', 11)).grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        self.ip_entry = ttk.Entry(input_frame, font=('Arial', 11), width=20)
+        self.ip_entry.grid(row=1, column=1, padx=5, pady=5)
+
+        ttk.Label(input_frame, text="Префикс (0-32):", font=('Arial', 11)).grid(row=1, column=2, padx=5, pady=5,
+                                                                                sticky="e")
+        self.prefix_entry = ttk.Entry(input_frame, font=('Arial', 11), width=5)
+        self.prefix_entry.grid(row=1, column=3, padx=5, pady=5)
+        self.prefix_entry.bind('<KeyRelease>', self.update_prefix_distribution)
+
+        # Buttons
+        button_frame = ttk.Frame(input_frame)
+        button_frame.grid(row=2, column=0, columnspan=4, pady=10)
+        ttk.Button(button_frame, text="Изчисли", command=self.calculate, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Изчисти", command=self.clear_calculator, width=15).pack(side=tk.LEFT, padx=5)
+
+        # Results
+        result_frame = ttk.LabelFrame(main_frame, text="Резултати", padding=10)
+        result_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        self.result_text = tk.Text(result_frame, wrap=tk.WORD, font=('Arial', 11), height=15)
+        self.result_text.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.result_text.configure(yscrollcommand=scrollbar.set)
+
+    def create_place_allocation_tab(self):
+        self.place_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.place_tab, text="Разпределение за места")
+
+        # Main frame
+        main_frame = ttk.Frame(self.place_tab)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Network input frame
+        network_frame = ttk.LabelFrame(main_frame, text="Основна мрежа", padding=10)
+        network_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(network_frame, text="IP мрежа:", font=('Arial', 11)).grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.network_ip_entry = ttk.Entry(network_frame, font=('Arial', 11), width=20)
+        self.network_ip_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(network_frame, text="Префикс:", font=('Arial', 11)).grid(row=0, column=2, padx=5, pady=5, sticky="e")
+        self.network_prefix_entry = ttk.Entry(network_frame, font=('Arial', 11), width=5)
+        self.network_prefix_entry.grid(row=0, column=3, padx=5, pady=5)
+
+        # Places frame
+        self.place_frame = ttk.LabelFrame(main_frame, text="Места", padding=10)
+        self.place_frame.pack(fill=tk.X, pady=5)
+
+        self.place_entries = []
+        self.add_place_entry()
+
+        # Place buttons frame
+        place_buttons_frame = ttk.Frame(self.place_frame)
+        place_buttons_frame.grid(row=100, column=0, columnspan=4, pady=10)
+
+        ttk.Button(place_buttons_frame, text="Добави място", command=self.add_place_entry, width=15).pack(side=tk.LEFT,
+                                                                                                       padx=5)
+        ttk.Button(place_buttons_frame, text="Изтрий място", command=self.remove_place_entry, width=15).pack(side=tk.LEFT,
+                                                                                                          padx=5)
+        ttk.Button(place_buttons_frame, text="Изчисти всички", command=self.clear_places, width=15).pack(side=tk.LEFT,
+                                                                                                        padx=5)
+
+        # Calculate button
+        ttk.Button(main_frame, text="Изчисли разпределение", command=self.calculate_allocation,
+                   style='Accent.TButton').pack(pady=10)
+
+        # Results frame
+        result_frame = ttk.LabelFrame(main_frame, text="Резултати", padding=10)
+        result_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Treeview with scrollbars
+        tree_frame = ttk.Frame(result_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.result_tree = ttk.Treeview(tree_frame, columns=(
+            'place', 'required', 'calculated', 'subnet', 'prefix',
+            'first', 'last', 'broadcast', 'total'), show='headings', height=10)
+
+        # Configure columns
+        columns = {
+            'place': ('място', 120),
+            'required': ('Изисквани хостове', 120),
+            'calculated': ('Изчислени хостове (2^n)', 150),
+            'subnet': ('Подмрежа', 150),
+            'prefix': ('Префикс', 80),
+            'first': ('Първи хост', 120),
+            'last': ('Последен хост', 120),
+            'broadcast': ('Broadcast', 120),
+            'total': ('Общо хостове', 100)
+        }
+
+        for col, (text, width) in columns.items():
+            self.result_tree.heading(col, text=text)
+            self.result_tree.column(col, width=width, anchor='center')
+
+        # Add scrollbars
+        y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.result_tree.yview)
+        x_scroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.result_tree.xview)
+        self.result_tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+
+        # Grid layout
+        self.result_tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Bind double-click event
+        self.result_tree.bind("<Double-1>", self.show_subnet_details)
+
+    def add_place_entry(self):
+        row = len(self.place_entries)
+
+        # Create entry frame
+        entry_frame = ttk.Frame(self.place_frame)
+        entry_frame.grid(row=row, column=0, columnspan=4, sticky="ew", pady=2)
+
+        ttk.Label(entry_frame, text=f"място {self.place_counter}:").pack(side=tk.LEFT, padx=5)
+        place_entry = ttk.Entry(entry_frame, width=20)
+        place_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(entry_frame, text="Брой хостове:").pack(side=tk.LEFT, padx=5)
+        hosts_entry = ttk.Entry(entry_frame, width=10)
+        hosts_entry.pack(side=tk.LEFT, padx=5)
+
+        # Store the entry frame along with the entries
+        self.place_entries.append((entry_frame, place_entry, hosts_entry))
+        self.place_counter += 1
+
+    def remove_place_entry(self):
+        if self.place_entries:
+            entry_frame, _, _ = self.place_entries.pop()
+            entry_frame.destroy()
+            self.place_counter -= 1
+
+    def clear_places(self):
+        for entry_frame, _, _ in self.place_entries:
+            entry_frame.destroy()
+        self.place_entries = []
+        self.place_counter = 1
+        self.add_place_entry()  # Add one empty entry
+
+    def update_prefix_distribution(self, event=None):
+        try:
+            prefix = int(self.prefix_entry.get())
+            if 0 <= prefix <= 32:
+                dist = get_prefix_distribution(prefix)
+                self.prefix_dist_text.set(f"{dist[0]}  {dist[1]}  {dist[2]}  {dist[3]}")
+        except ValueError:
+            pass
+
+    def calculate(self):
+        try:
+            ip = self.ip_entry.get()
+            prefix = int(self.prefix_entry.get())
+
+            if not (0 <= prefix <= 32):
+                raise ValueError("Префиксът трябва да е между 0 и 32.")
+
+            ip_class = get_ip_class(ip)
+            if (ip_class == "A" and prefix < 8) or (ip_class == "B" and prefix < 16) or (
+                    ip_class == "C" and prefix < 24):
+                messagebox.showerror("Грешка", "Няма решение за този префикс в съответния IP клас!")
+                return
+
+            subnet_mask, wildcard_mask, network_address, network_address_binary, first_host, last_host, broadcast_address, total_hosts, has_solution = calculate_network_info(
+                ip, prefix)
+
+            result = (
+                f"IP адрес в двоична: {ip_to_binary(ip)}\n"
+                f"Мрежова маска: {subnet_mask}\n"
+                f"Wildcard маска: {wildcard_mask}\n"
+                f"Мрежова маска (двоична): {ip_to_binary(subnet_mask)}\n"
+                f"Мрежови адрес: {network_address}\n"
+                f"Мрежови адрес (двоична): {network_address_binary}\n"
+                f"Префикс: /{prefix}\n"
+                f"Първи хост: {first_host}\n"
+                f"Последен хост: {last_host}\n"
+                f"Broadcast адрес: {broadcast_address}\n"
+                f"Клас на IP адреса: {ip_class}\n"
+                f"Брой мрежи: 2^{prefix} = {2 ** prefix}\n"
+                f"Брой хостове: 2^{32 - prefix} - 2 = {total_hosts}\n"
+                f"{has_solution}"
+            )
+
+            self.result_text.delete(1.0, tk.END)
+            self.result_text.insert(tk.END, result)
+
+        except ValueError as e:
+            messagebox.showerror("Грешка", f"Невалидни входни данни!\n{str(e)}")
+
+    def clear_calculator(self):
+        self.ip_entry.delete(0, tk.END)
+        self.prefix_entry.delete(0, tk.END)
+        self.prefix_dist_text.set("")
+        self.result_text.delete(1.0, tk.END)
+
+    def calculate_allocation(self):
+        try:
+            # Clear previous results
+            for item in self.result_tree.get_children():
+                self.result_tree.delete(item)
+
+            # Validate input
+            ip = self.network_ip_entry.get()
+            prefix = int(self.network_prefix_entry.get())
+
+            if not (0 <= prefix <= 32):
+                raise ValueError("Префиксът трябва да е между 0 и 32")
+
+            # Create allocator
+            allocator = PlaceAllocator(ip, prefix)
+
+            # Add places
+            for _, place_entry, hosts_entry in self.place_entries:
+                place = place_entry.get().strip()
+                hosts = hosts_entry.get().strip()
+
+                if place and hosts:
+                    try:
+                        allocator.add_place(place, int(hosts))
+                    except ValueError:
+                        messagebox.showerror("Грешка", f"Невалиден брой хостове за място {place}")
+                        return
+
+            # Calculate allocation
+            results = allocator.calculate_subnets()
+
+            # Display results
+            for result in results:
+                if 'error' in result:
+                    self.result_tree.insert('', 'end', values=(
+                        result['place'],
+                        result['required_hosts'],
+                        "",
+                        result['error'],
+                        "", "", "", "", ""
+                    ), tags=('error',))
+                else:
+                    self.result_tree.insert('', 'end', values=(
+                        result['place'],
+                        result['required_hosts'],
+                        f"2^{result['required_power']} = {result['required_calculated']}",
+                        result['subnet'],
+                        result['prefix'],
+                        result['first_host'],
+                        result['last_host'],
+                        result['broadcast'],
+                        result['total_hosts']
+                    ), tags=(result['subnet'],))
+
+            # Configure tags
+            self.result_tree.tag_configure('error', foreground='red')
+
+        except Exception as e:
+            messagebox.showerror("Грешка", f"Възникна грешка: {str(e)}")
+
+    def show_subnet_details(self, event):
+        item = self.result_tree.selection()[0]
+        subnet = self.result_tree.item(item, "tags")[0]
+
+        if subnet and not subnet.startswith('error'):
+            try:
+                network = ipaddress.IPv4Network(subnet)
+
+                details = (
+                    f"Подмрежа: {subnet}\n"
+                    f"Мрежова маска: {network.netmask}\n"
+                    f"Wildcard маска: {calculate_wildcard(str(network.netmask))}\n"
+                    f"Мрежова маска (двоична): {ip_to_binary(str(network.netmask))}\n"
+                    f"Мрежови адрес: {network.network_address}\n"
+                    f"Мрежови адрес (двоична): {ip_to_binary(str(network.network_address))}\n"
+                    f"Префикс: /{network.prefixlen}\n"
+                    f"Първи хост: {network.network_address + 1}\n"
+                    f"Последен хост: {network.broadcast_address - 1}\n"
+                    f"Broadcast адрес: {network.broadcast_address}\n"
+                    f"Клас на IP адреса: {get_ip_class(str(network.network_address))}"
+                )
+
+                messagebox.showinfo("Детайли за подмрежа", details)
+            except ValueError:
+                pass
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = IPCalculatorApp(root)
+    root.mainloop()
