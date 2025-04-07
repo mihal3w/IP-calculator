@@ -1,4 +1,4 @@
-# 🧠 IP Calculator & Network Planning Tool
+🧠 IP Calculator & Network Planning Tool
 
 An intuitive desktop application that combines **IP network parameter calculations** with **automated subnet allocation** for different physical or logical locations (e.g., departments, offices, floors).
 
