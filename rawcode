@@ -73,10 +73,23 @@ class PlaceAllocator:
         results = []
 
         for place, hosts in sorted_places:
-            required_hosts = hosts + 2  # Network and broadcast addresses
-            required_prefix = 32 - (required_hosts - 1).bit_length()
+            required_hosts = hosts + 2  # Мрежов адрес + broadcast
 
-            # Find best fit (smallest available network that can accommodate)
+            # Оптимизация за малки мрежи:
+            if hosts == 2:  # Специален случай за 2 хоста (2^2 = 4, префикс /30)
+                required_power = 2
+                required_calculated = 4
+                required_prefix = 30
+            elif 3 <= hosts <= 6:  # За 3-6 хоста (2^3 = 8, префикс /29)
+                required_power = 3
+                required_calculated = 8
+                required_prefix = 29
+            else:  # Стандартно изчисление за големи мрежи
+                required_power = (required_hosts - 1).bit_length()
+                required_calculated = 2 ** required_power
+                required_prefix = 32 - required_power
+
+            # Търсим най-подходящата налична мрежа
             best_fit = None
             best_fit_index = -1
 
@@ -90,33 +103,36 @@ class PlaceAllocator:
                 results.append({'place': place, 'error': f"Няма достатъчно адреси за {hosts} хоста"})
                 continue
 
-            # Remove the selected network from available
+            # Премахваме избраната мрежа от наличните
             del available_networks[best_fit_index]
 
-            # Calculate exact prefix needed
-            exact_prefix = 32 - (required_hosts - 1).bit_length()
-
             try:
-                # Split the network
-                subnets = list(best_fit.subnets(new_prefix=exact_prefix))
+                # Разделяме мрежата
+                subnets = list(best_fit.subnets(new_prefix=required_prefix))
                 allocated_subnet = subnets[0]
 
-                # Add remaining subnets back to available
+                # Добавяме останалите подсети обратно в наличните
                 available_networks.extend(subnets[1:])
-                # Sort available networks by prefix length (descending) for best-fit
                 available_networks.sort(key=lambda x: x.prefixlen, reverse=True)
+
+                # Проверка за действително използваеми хостове
+                actual_usable = allocated_subnet.num_addresses - 2
+                if actual_usable < hosts:
+                    results.append({'place': place,
+                                    'error': f"Недостатъчно адреси (изисквани: {hosts}, налични: {actual_usable})"})
+                    continue
 
                 results.append({
                     'place': place,
                     'required_hosts': hosts,
-                    'required_power': (hosts + 2).bit_length(),
-                    'required_calculated': 2 ** ((hosts + 2).bit_length()),
+                    'required_power': required_power,
+                    'required_calculated': required_calculated,
                     'subnet': str(allocated_subnet),
                     'prefix': allocated_subnet.prefixlen,
                     'first_host': str(allocated_subnet.network_address + 1),
                     'last_host': str(allocated_subnet.broadcast_address - 1),
                     'broadcast': str(allocated_subnet.broadcast_address),
-                    'total_hosts': allocated_subnet.num_addresses - 2,
+                    'total_hosts': actual_usable,
                     'network_object': allocated_subnet
                 })
 
